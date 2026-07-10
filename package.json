@@ -1,0 +1,20 @@
+{
+  "name": "artisttattoo-kgb-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend Stripe pour Artisttattoo KGB — Checkout, webhooks, déblocage de formations, examens, certificats.",
+  "main": "api/server.js",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "engines": {
+    "node": ">=18.x"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "pdfkit": "^0.15.0",
+    "stripe": "^16.2.0"
+  }
+}
