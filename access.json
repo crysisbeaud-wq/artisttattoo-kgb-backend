@@ -1,1 +1,12 @@
-{}
+{
+  "artisttattoo.kgb@gmail.com": {
+    "debutant": true,
+    "intermediaire": true,
+    "expert": true,
+    "pack_complet": true,
+    "session_live": true,
+    "tattoo_pass_hebdo": true,
+    "tattoo_pass_mensuel": true,
+    "tattoo_pass_annuel": true
+  }
+}
