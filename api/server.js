@@ -119,7 +119,7 @@ const PASS_THRESHOLD = 80;
 
 app.post('/validate-exam', async (req, res) => {
   try {
-    const { email, formation, score } = req.body || {};
+    const { email, formation, score, nom } = req.body || {};
 
     if (!email || !formation || typeof score !== 'number') {
       return res.status(400).json({ error: 'Champs requis : email, formation, score (nombre).' });
@@ -144,7 +144,7 @@ app.post('/validate-exam', async (req, res) => {
       });
     }
 
-    const pdfBuffer = await generateCertificatePdf({ email, formation, score });
+    const pdfBuffer = await generateCertificatePdf({ email, formation, nom });
     await store.saveCertificate(email, formation, pdfBuffer);
 
     return res.json({
@@ -183,24 +183,64 @@ app.get('/certificat/:email', (req, res) => {
   }
 });
 
-function generateCertificatePdf({ email, formation, score }) {
+function generateCertificatePdf({ email, formation, nom }) {
   return new Promise((resolve, reject) => {
     const product = PRODUCTS[formation];
-    const doc = new PDFDocument({ size: 'A4', margin: 60 });
+    const displayName = (nom && nom.trim()) ? nom.trim() : email;
+
+    const GOLD = '#D4AF37';
+    const GOLD_DIM = '#8a7328';
+    const INK = '#0A0A0A';
+    const TITLE = '#E0E0E0';
+    const TEXT = '#C8C8C8';
+
+    const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 0 });
     const chunks = [];
+    const W = doc.page.width;
+    const H = doc.page.height;
 
     doc.on('data', (chunk) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    doc.fontSize(10).fillColor('#9c1c1c').text('ARTISTTATTOO KGB', { align: 'center' }).moveDown(2);
-    doc.fontSize(28).fillColor('#0e0e0e').text('CERTIFICAT DE COMPLÉTION', { align: 'center' }).moveDown(1.5);
-    doc.fontSize(14).fillColor('#3a3a3a').text('Ce certificat atteste que', { align: 'center' }).moveDown(0.5);
-    doc.fontSize(20).fillColor('#0e0e0e').text(email, { align: 'center' }).moveDown(0.5);
-    doc.fontSize(14).fillColor('#3a3a3a').text(`a complété avec succès la formation`, { align: 'center' }).moveDown(0.3);
-    doc.fontSize(18).fillColor('#9c1c1c').text(product ? product.label : formation, { align: 'center' }).moveDown(0.5);
-    doc.fontSize(13).fillColor('#3a3a3a').text(`avec un score de ${score}%`, { align: 'center' }).moveDown(2);
-    doc.fontSize(11).fillColor('#8f8a7c').text(`Délivré le ${new Date().toLocaleDateString('fr-CA')}`, { align: 'center' });
+    doc.rect(0, 0, W, H).fill(INK);
+
+    doc.lineWidth(2.5).strokeColor(GOLD).rect(28, 28, W - 56, H - 56).stroke();
+    doc.lineWidth(0.75).strokeColor(GOLD_DIM).rect(40, 40, W - 80, H - 80).stroke();
+
+    doc.fillColor(GOLD).font('Helvetica-Bold').fontSize(12)
+      .text('A R T I S T T A T T O O   K G B', 0, 78, { align: 'center', width: W });
+    doc.fillColor(TEXT).font('Helvetica').fontSize(9)
+      .text('É C O L E   D E   T A T O U A G E   P R O F E S S I O N N E L L E', 0, 96, { align: 'center', width: W });
+
+    doc.moveTo(W / 2 - 60, 122).lineTo(W / 2 + 60, 122).lineWidth(1).strokeColor(GOLD).stroke();
+
+    doc.fillColor(TITLE).font('Helvetica-Bold').fontSize(34)
+      .text('CERTIFICAT DE COMPLÉTION', 0, 148, { align: 'center', width: W });
+
+    doc.fillColor(TEXT).font('Helvetica-Oblique').fontSize(13)
+      .text('Ce certificat est décerné à', 0, 205, { align: 'center', width: W });
+
+    doc.fillColor(GOLD).font('Helvetica-Bold').fontSize(30)
+      .text(displayName, 60, 232, { align: 'center', width: W - 120 });
+
+    doc.moveTo(W / 2 - 140, 278).lineTo(W / 2 + 140, 278).lineWidth(0.75).strokeColor(GOLD_DIM).stroke();
+
+    doc.fillColor(TEXT).font('Helvetica').fontSize(13)
+      .text('pour avoir complété avec succès la', 0, 296, { align: 'center', width: W });
+
+    doc.fillColor(TITLE).font('Helvetica-Bold').fontSize(19)
+      .text(product ? product.label : formation, 0, 318, { align: 'center', width: W });
+
+    const dateStr = new Date().toLocaleDateString('fr-CA', { year: 'numeric', month: 'long', day: 'numeric' });
+    doc.fillColor(GOLD_DIM).font('Helvetica').fontSize(10)
+      .text(`Délivré le ${dateStr}`, 0, H - 110, { align: 'center', width: W });
+
+    doc.fillColor(TEXT).font('Helvetica').fontSize(10)
+      .text('Artisttattoo KGB — École de Tatouage Professionnelle · Kitigan Zibi, Québec', 0, H - 92, { align: 'center', width: W });
+
+    doc.fillColor(GOLD_DIM).font('Helvetica').fontSize(8)
+      .text('formationtattoo.ca', W - 200, H - 60, { width: 160, align: 'right' });
 
     doc.end();
   });
