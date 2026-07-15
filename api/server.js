@@ -53,12 +53,16 @@ app.post('/visit-count', async (req, res) => {
   try {
     const count = await store.incrementVisitCount();
 
-    // Notification push via ntfy (n'interrompt pas la réponse en cas d'échec)
-    fetch('https://ntfy.sh/kgb-visites-3t7m9q', {
-      method: 'POST',
-      headers: { 'Title': 'Visite sur formationtattoo.ca' },
-      body: `Visiteur #${count} sur le site`,
-    }).catch(() => {});
+    // Notification push via ntfy (on attend l'envoi avant de répondre — requis sur Vercel)
+    try {
+      await fetch('https://ntfy.sh/kgb-visites-3t7m9q', {
+        method: 'POST',
+        headers: { 'Title': 'Visite sur formationtattoo.ca' },
+        body: `Visiteur #${count} sur le site`,
+      });
+    } catch (e) {
+      console.error('Erreur ntfy :', e);
+    }
 
     return res.json({ count });
   } catch (err) {
