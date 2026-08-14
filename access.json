@@ -8,5 +8,15 @@
     "tattoo_pass_hebdo": true,
     "tattoo_pass_mensuel": true,
     "tattoo_pass_annuel": true
+  },
+  "alexandralemieux93@icloud.com": {
+    "debutant": true,
+    "intermediaire": true,
+    "expert": true,
+    "pack_complet": true,
+    "session_live": false,
+    "tattoo_pass_hebdo": false,
+    "tattoo_pass_mensuel": false,
+    "tattoo_pass_annuel": false
   }
 }
