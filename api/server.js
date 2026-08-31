@@ -53,12 +53,43 @@ app.post('/visit-count', async (req, res) => {
   try {
     const count = await store.incrementVisitCount();
 
+    // --- Localisation approximative du visiteur (ville/région) ---
+    let lieu = '';
+    try {
+      // Vercel fournit ces en-têtes automatiquement
+      const villeVercel = req.headers['x-vercel-ip-city'];
+      const regionVercel = req.headers['x-vercel-ip-country-region'];
+      const paysVercel = req.headers['x-vercel-ip-country'];
+
+      if (villeVercel) {
+        lieu = [decodeURIComponent(villeVercel), regionVercel, paysVercel]
+          .filter(Boolean)
+          .join(', ');
+      } else {
+        // Repli : interroger un service de géolocalisation IP gratuit
+        const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+        if (ip) {
+          const geo = await fetch(`http://ip-api.com/json/${ip}?fields=status,city,regionName,country`);
+          const data = await geo.json();
+          if (data && data.status === 'success') {
+            lieu = [data.city, data.regionName, data.country].filter(Boolean).join(', ');
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Erreur géolocalisation :', e);
+    }
+
+    const message = lieu
+      ? `Visiteur #${count} — ${lieu}`
+      : `Visiteur #${count} sur le site`;
+
     // Notification push via ntfy (on attend l'envoi avant de répondre — requis sur Vercel)
     try {
       await fetch('https://ntfy.sh/kgb-visites-3t7m9q', {
         method: 'POST',
         headers: { 'Title': 'Visite sur formationtattoo.ca' },
-        body: `Visiteur #${count} sur le site`,
+        body: message,
       });
     } catch (e) {
       console.error('Erreur ntfy :', e);
