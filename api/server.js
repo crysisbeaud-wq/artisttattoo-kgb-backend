@@ -325,7 +325,7 @@ app.post('/admin/certificat', async (req, res) => {
       });
     }
 
-    const { secret, nom, formation, email, score } = req.body || {};
+    const { secret, nom, formation, email, score, confirme } = req.body || {};
 
     if (!secret || !secretsEgaux(secret, secretAttendu)) {
       return res.status(401).json({ error: 'Mot de passe administrateur invalide.' });
@@ -337,12 +337,23 @@ app.post('/admin/certificat', async (req, res) => {
       return res.status(400).json({ error: `Formation inconnue : "${formation}".` });
     }
 
-    // Règle absolue : aucun certificat sans examen réussi, même en manuel.
-    const note = Number(score);
-    if (!isFinite(note) || note < PASS_THRESHOLD || note > 100) {
+    // Règle absolue : aucun certificat sans examen réussi. En manuel, c'est
+    // le formateur qui l'atteste explicitement — pas une note inventée.
+    if (confirme !== true) {
       return res.status(400).json({
-        error: `La note obtenue est requise et doit être d'au moins ${PASS_THRESHOLD} %. Un certificat ne peut pas être décerné sans examen réussi.`,
+        error: "Il faut confirmer que la personne a réussi l'examen avant de décerner un certificat.",
       });
+    }
+
+    // La note est facultative. Fournie, elle doit correspondre à une réussite.
+    let note;
+    if (score !== undefined && score !== null && String(score).trim() !== '') {
+      note = Number(score);
+      if (!isFinite(note) || note < PASS_THRESHOLD || note > 100) {
+        return res.status(400).json({
+          error: `Si tu inscris une note, elle doit être entre ${PASS_THRESHOLD} et 100. Laisse le champ vide si tu ne la connais pas.`,
+        });
+      }
     }
 
     const pdfBuffer = await generateCertificatePdf({
