@@ -10,6 +10,7 @@
  *   POST /validate-exam             → valide un examen (≥80%) et génère un certificat
  *   GET  /certificat/:email         → télécharge un certificat (le regénère s'il a été perdu)
  *   POST /admin/certificat          → génère un certificat à la main (réservé à l'admin)
+ *   POST /admin/acces               → consulter / accorder / retirer un accès (réservé à l'admin)
  *   GET  /health                    → healthcheck
  * ---------------------------------------------------------------------------
  */
@@ -372,6 +373,78 @@ app.post('/admin/certificat', async (req, res) => {
   } catch (err) {
     console.error('Erreur /admin/certificat :', err);
     return res.status(500).json({ error: 'Erreur lors de la génération du certificat.' });
+  }
+});
+
+/**
+ * Gestion manuelle des accès, réservée à l'administrateur.
+ *
+ *   action « consulter » : affiche les accès et les examens d'un courriel
+ *   action « accorder »  : donne l'accès à une formation
+ *   action « retirer »   : retire l'accès à une formation
+ *
+ * Sert à rétablir un client, à donner l'accès à un élève formé en studio,
+ * à gérer un remboursement, ou à se donner l'accès pour tester.
+ * Protégée par ADMIN_SECRET, comme la génération de certificats.
+ */
+const FORMATIONS_DU_PACK = ['debutant', 'intermediaire', 'expert'];
+const FORMATIONS_AVEC_EXAMEN = ['debutant', 'intermediaire', 'expert'];
+
+async function resumeAcces(email) {
+  const acces = await store.getAccess(email);
+  const examens = {};
+  for (const f of FORMATIONS_AVEC_EXAMEN) {
+    examens[f] = await store.getExamResult(email, f);
+  }
+  return { email: String(email).trim().toLowerCase(), acces, examens };
+}
+
+app.post('/admin/acces', async (req, res) => {
+  try {
+    const secretAttendu = process.env.ADMIN_SECRET;
+    if (!secretAttendu) {
+      return res.status(503).json({
+        error: "ADMIN_SECRET n'est pas configuré sur le serveur. Ajoute-le dans les variables d'environnement Vercel.",
+      });
+    }
+
+    const { secret, email, formation, action } = req.body || {};
+
+    if (!secret || !secretsEgaux(secret, secretAttendu)) {
+      return res.status(401).json({ error: 'Mot de passe administrateur invalide.' });
+    }
+
+    const courriel = String(email || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(courriel)) {
+      return res.status(400).json({ error: 'Courriel invalide.' });
+    }
+
+    if (action === 'consulter') {
+      return res.json(await resumeAcces(courriel));
+    }
+
+    if (action !== 'accorder' && action !== 'retirer') {
+      return res.status(400).json({ error: `Action inconnue : "${action}".` });
+    }
+    if (!formation || !PRODUCTS[formation]) {
+      return res.status(400).json({ error: `Formation inconnue : "${formation}".` });
+    }
+
+    const valeur = action === 'accorder';
+    await store.setAccess(courriel, formation, valeur);
+
+    // Même logique que le webhook Stripe : le pack débloque les trois formations
+    if (formation === 'pack_complet' && valeur) {
+      for (const f of FORMATIONS_DU_PACK) {
+        await store.setAccess(courriel, f, true);
+      }
+    }
+
+    console.log(`🔑 Admin : ${action} ${formation} → ${courriel}`);
+    return res.json(await resumeAcces(courriel));
+  } catch (err) {
+    console.error('Erreur /admin/acces :', err);
+    return res.status(500).json({ error: 'Erreur lors de la gestion des accès.' });
   }
 });
 
