@@ -59,8 +59,14 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     return res.json({ received: true });
   } catch (err) {
-    console.error('Erreur de traitement du webhook :', err);
-    return res.status(200).json({ received: true, warning: 'Erreur interne loguée.' });
+    // On répond 500 et non 200 : Stripe considère alors la livraison comme
+    // ratée et la réessaie automatiquement pendant jusqu'à 3 jours.
+    // Avec un 200, un client qui paie pendant une panne passagère de la base
+    // de données n'aurait jamais reçu son accès, sans que personne le sache.
+    // Rejouer l'événement est sans danger : accorder deux fois le même accès
+    // ne change rien.
+    console.error('Erreur de traitement du webhook — Stripe va réessayer :', err);
+    return res.status(500).json({ received: false, error: 'Erreur interne, nouvelle tentative attendue.' });
   }
 });
 
