@@ -7,7 +7,8 @@
  * Routes :
  *   POST /create-checkout-session   → crée une session Stripe Checkout
  *   POST /verify-access             → vérifie si un email a accès à un produit
- *   POST /validate-exam             → valide un examen (≥80%) et génère un certificat
+ *   POST /formation/contenu         → envoie les chapitres + l'examen (sans réponses) aux acheteurs
+ *   POST /validate-exam             → corrige l'examen ICI (≥80%) et génère un certificat
  *   GET  /certificat/:email         → télécharge un certificat (le regénère s'il a été perdu)
  *   POST /admin/certificat          → génère un certificat à la main (réservé à l'admin)
  *   POST /admin/acces               → consulter / accorder / retirer un accès (réservé à l'admin)
@@ -33,6 +34,17 @@ try {
 } catch (e) {
   console.error('lib/logo-kgb.js introuvable, sceau de repli utilisé :', e.message);
 }
+
+// Contenu payant des formations (chapitres + examens avec réponses).
+// Il vit seulement ici, sur le serveur : voir lib/contenu-debutant.js, etc.
+const CONTENUS = {};
+['debutant', 'intermediaire', 'expert'].forEach((niveau) => {
+  try {
+    CONTENUS[niveau] = require(`../lib/contenu-${niveau}`);
+  } catch (e) {
+    console.error(`lib/contenu-${niveau}.js introuvable :`, e.message);
+  }
+});
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -172,30 +184,115 @@ app.post('/verify-access', async (req, res) => {
 
 const PASS_THRESHOLD = 80;
 
-app.post('/validate-exam', async (req, res) => {
-  try {
-    const { email, formation, score, nom } = req.body || {};
+function aAccesFormation(access, formation) {
+  return Boolean(access && (access[formation] || access.pack_complet));
+}
 
-    if (!email || !formation || typeof score !== 'number') {
-      return res.status(400).json({ error: 'Champs requis : email, formation, score (nombre).' });
+/**
+ * Envoie le contenu payant d'une formation, seulement si l'email a acheté.
+ * Les questions d'examen partent SANS les bonnes réponses.
+ */
+app.post('/formation/contenu', async (req, res) => {
+  try {
+    const { email, formation } = req.body || {};
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      return res.status(400).json({ error: 'Entre une adresse courriel valide.' });
     }
-    if (!PRODUCTS[formation]) {
+    const contenu = CONTENUS[formation];
+    if (!contenu) {
       return res.status(400).json({ error: `Formation inconnue : "${formation}".` });
     }
 
     const access = await store.getAccess(email);
-    if (!access[formation]) {
+    if (!aAccesFormation(access, formation)) {
+      return res.status(403).json({ error: "Aucun accès trouvé pour ce courriel pour cette formation." });
+    }
+
+    const { examen } = contenu;
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({
+      formation,
+      chapitresHtml: contenu.chapitresHtml,
+      examen: {
+        titre: examen.titre,
+        noteDePassage: examen.noteDePassage || PASS_THRESHOLD,
+        questions: examen.questions.map(({ correct, ...q }) => q),
+        questionsReflexion: examen.questionsReflexion || [],
+      },
+    });
+  } catch (err) {
+    console.error('Erreur /formation/contenu :', err);
+    return res.status(500).json({ error: 'Impossible de charger la formation pour le moment.' });
+  }
+});
+
+/** Corrige les réponses envoyées par l'élève avec le corrigé du serveur. */
+function corrigeExamen(examen, reponses) {
+  let bonnes = 0;
+  const manquantes = [];
+  const corrections = {};
+
+  examen.questions.forEach((q) => {
+    corrections[q.num] = q.correct;
+    const brut = reponses[q.num] !== undefined ? reponses[q.num] : reponses[String(q.num)];
+    let valeur = null;
+    if (q.type === 'vf') {
+      if (brut === true || brut === 'true') valeur = true;
+      else if (brut === false || brut === 'false') valeur = false;
+    } else if (brut !== null && brut !== '' && Number.isInteger(Number(brut))) {
+      valeur = Number(brut);
+    }
+    if (valeur === null) manquantes.push(q.num);
+    else if (valeur === q.correct) bonnes += 1;
+  });
+
+  const total = examen.questions.length;
+  return { bonnes, total, manquantes, corrections, score: Math.round((bonnes / total) * 100) };
+}
+
+app.post('/validate-exam', async (req, res) => {
+  try {
+    const { email, formation, reponses, nom } = req.body || {};
+
+    // Ancienne page (qui envoyait elle-même sa note) : on ne la croit plus sur parole
+    if (!reponses || typeof reponses !== 'object' || Array.isArray(reponses)) {
+      return res.status(400).json({
+        error: "Cette page n'est plus à jour. Recharge-la, puis soumets ton examen à nouveau.",
+      });
+    }
+    if (!email || !formation) {
+      return res.status(400).json({ error: 'Champs requis : email, formation, reponses.' });
+    }
+    const contenu = CONTENUS[formation];
+    if (!contenu || !PRODUCTS[formation]) {
+      return res.status(400).json({ error: `Formation inconnue : "${formation}".` });
+    }
+
+    const access = await store.getAccess(email);
+    if (!aAccesFormation(access, formation)) {
       return res.status(403).json({ error: "Aucun accès payé trouvé pour cette formation." });
     }
 
-    const passed = score >= PASS_THRESHOLD;
+    const resultat = corrigeExamen(contenu.examen, reponses);
+    if (resultat.manquantes.length) {
+      return res.status(400).json({
+        error: `Il manque des réponses (question${resultat.manquantes.length > 1 ? 's' : ''} ${resultat.manquantes.join(', ')}).`,
+        manquantes: resultat.manquantes,
+      });
+    }
+
+    const seuil = contenu.examen.noteDePassage || PASS_THRESHOLD;
+    const { score, bonnes, total, corrections } = resultat;
+    const passed = score >= seuil;
     await store.saveExamResult(email, formation, score, passed, nom);
+
+    const reponse = { passed, score, bonnes, total, noteDePassage: seuil, corrections };
 
     if (!passed) {
       return res.json({
+        ...reponse,
         success: false,
-        passed: false,
-        message: `Score insuffisant (${score}%). Il faut au moins ${PASS_THRESHOLD}% pour débloquer le certificat.`,
+        message: `Score insuffisant (${score}%). Il faut au moins ${seuil}% pour débloquer le certificat.`,
       });
     }
 
@@ -203,8 +300,8 @@ app.post('/validate-exam', async (req, res) => {
     await store.saveCertificate(email, formation, pdfBuffer);
 
     return res.json({
+      ...reponse,
       success: true,
-      passed: true,
       url: `/certificat/${encodeURIComponent(email)}?formation=${encodeURIComponent(formation)}`,
     });
   } catch (err) {
